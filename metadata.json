@@ -1,0 +1,6 @@
+{
+  "name": "SpaceZ AI",
+  "description": "An advanced chatbot and AI image generation client powered by Space-Z AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
