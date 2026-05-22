@@ -361,15 +361,35 @@ fun ChatTabContent(
                 val bitmap = BitmapFactory.decodeStream(inputStream)
                 inputStream?.close()
                 if (bitmap != null) {
+                    val maxDimension = 800
+                    val width = bitmap.width
+                    val height = bitmap.height
+                    val finalBitmap = if (width > maxDimension || height > maxDimension) {
+                        val ratio = width.toFloat() / height.toFloat()
+                        val (newWidth, newHeight) = if (width > height) {
+                            Pair(maxDimension, (maxDimension / ratio).toInt())
+                        } else {
+                            Pair((maxDimension * ratio).toInt(), maxDimension)
+                        }
+                        Bitmap.createScaledBitmap(bitmap, newWidth, newHeight, true)
+                    } else {
+                        bitmap
+                    }
+
                     val outputStream = ByteArrayOutputStream()
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+                    finalBitmap.compress(Bitmap.CompressFormat.JPEG, 75, outputStream)
                     val bytes = outputStream.toByteArray()
                     val base64String = Base64.encodeToString(bytes, Base64.DEFAULT)
                     attachedImageB64 = "data:image/jpeg;base64,$base64String"
+                    
+                    if (finalBitmap != bitmap) {
+                        finalBitmap.recycle()
+                    }
+                    bitmap.recycle()
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
-                Toast.makeText(context, "Không thể đọc ảnh: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, "Không thể đọc và tối ưu ảnh: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
             }
         }
     }
