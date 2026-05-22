@@ -10,10 +10,14 @@ import kotlinx.coroutines.flow.Flow
 
 class SpaceZRepository(
     private val messageDao: MessageDao,
-    private val apiService: SpaceZApiService
+    private var apiService: SpaceZApiService
 ) {
     val allMessages: Flow<List<MessageEntity>> = messageDao.getAllMessages()
     val allImages: Flow<List<MessageEntity>> = messageDao.getGeneratedImages()
+
+    fun updateApiService(newApiService: SpaceZApiService) {
+        this.apiService = newApiService
+    }
 
     suspend fun insertMessage(message: MessageEntity): Long {
         return messageDao.insertMessage(message)

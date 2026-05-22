@@ -52,6 +52,7 @@ import coil.compose.SubcomposeAsyncImage
 import com.example.R
 import com.example.database.MessageEntity
 import kotlinx.coroutines.launch
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -64,6 +65,7 @@ fun SpaceZScreen(
     val isDrawingMode by viewModel.isDrawingMode.collectAsStateWithLifecycle()
     val isLoading by viewModel.isLoading.collectAsStateWithLifecycle()
     val apiKey by viewModel.apiKey.collectAsStateWithLifecycle()
+    val baseUrl by viewModel.baseUrl.collectAsStateWithLifecycle()
     val imageSize by viewModel.imageSize.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
 
@@ -206,9 +208,12 @@ fun SpaceZScreen(
                 )
                 2 -> SettingsTabContent(
                     apiKey = apiKey,
+                    baseUrl = baseUrl,
                     imageSize = imageSize,
                     onSaveApiKey = { viewModel.setApiKey(it) },
                     onResetApiKey = { viewModel.resetApiKey() },
+                    onSaveBaseUrl = { viewModel.setBaseUrl(it) },
+                    onResetBaseUrl = { viewModel.resetBaseUrl() },
                     onSaveSize = { viewModel.setImageSize(it) },
                     onClearHistory = { viewModel.clearAllHistory() }
                 )
@@ -236,14 +241,20 @@ fun SpaceZScreen(
     if (showApiKeyDialog) {
         QuickApiKeyDialog(
             currentApiKey = apiKey,
+            currentBaseUrl = baseUrl,
             onDismiss = { showApiKeyDialog = false },
-            onSave = {
-                viewModel.setApiKey(it)
+            onSave = { key, url ->
+                viewModel.setApiKey(key)
+                viewModel.setBaseUrl(url)
                 showApiKeyDialog = false
             },
             onReset = {
                 viewModel.resetApiKey()
+                viewModel.resetBaseUrl()
                 showApiKeyDialog = false
+            },
+            onParseCurl = { curl ->
+                viewModel.parseAndApplyCurl(curl)
             }
         )
     }
@@ -881,13 +892,18 @@ fun GalleryTabContent(
 @Composable
 fun SettingsTabContent(
     apiKey: String,
+    baseUrl: String,
     imageSize: String,
     onSaveApiKey: (String) -> Unit,
     onResetApiKey: () -> Unit,
+    onSaveBaseUrl: (String) -> Unit,
+    onResetBaseUrl: () -> Unit,
     onSaveSize: (String) -> Unit,
     onClearHistory: () -> Unit
 ) {
     var keyInput by remember(apiKey) { mutableStateOf(apiKey) }
+    var urlInput by remember(baseUrl) { mutableStateOf(baseUrl) }
+    var curlInput by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
     val context = LocalContext.current
 
@@ -915,7 +931,7 @@ fun SettingsTabContent(
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     Text(
-                        text = "Vui lòng dán khóa Authorization Bearer để kích hoạt dịch vụ Space-Z trên thiết bị hoặc sử dụng khóa mặc định được chuẩn bị sẵn.",
+                        text = "Vui lòng cấu hình khóa nhận dạng (Bearer) và URL gốc của máy chủ để gửi yêu cầu API.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -923,7 +939,7 @@ fun SettingsTabContent(
                     OutlinedTextField(
                         value = keyInput,
                         onValueChange = { keyInput = it },
-                        label = { Text("YOUR_API_KEY (Bearer)") },
+                        label = { Text("Mã token SpaceZ Bearer") },
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("settings_api_key_field"),
@@ -939,9 +955,23 @@ fun SettingsTabContent(
                             IconButton(onClick = { showPassword = !showPassword }) {
                                 Icon(
                                     imageVector = if (showPassword) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                                    contentDescription = if (showPassword) "Ẩn" else "Hiện"
+                                    contentDescription = if (showPassword) "Ẩn/Hiện" else "Hiện"
                                 )
                             }
+                        }
+                    )
+
+                    OutlinedTextField(
+                        value = urlInput,
+                        onValueChange = { urlInput = it },
+                        label = { Text("Base API URL") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null
+                            )
                         }
                     )
 
@@ -951,32 +981,121 @@ fun SettingsTabContent(
                     ) {
                         Button(
                             onClick = {
-                                if (keyInput.trim().isNotEmpty()) {
+                                if (keyInput.trim().isNotEmpty() && urlInput.trim().isNotEmpty()) {
                                     onSaveApiKey(keyInput.trim())
-                                    Toast.makeText(context, "Đã lưu API Key thành công!", Toast.LENGTH_SHORT).show()
+                                    onSaveBaseUrl(urlInput.trim())
+                                    Toast.makeText(context, "Đã lưu thiết đặt thành công!", Toast.LENGTH_SHORT).show()
                                 } else {
-                                    Toast.makeText(context, "API Key không được bỏ trống!", Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, "Các trường dữ liệu không được để trống!", Toast.LENGTH_SHORT).show()
                                 }
                             },
                             modifier = Modifier
-                                .weight(1f)
+                                .weight(1.2f)
                                 .testTag("save_api_key_button"),
                             colors = ButtonDefaults.buttonColors(
                                 containerColor = MaterialTheme.colorScheme.primary
                             )
                         ) {
-                            Text("Cập nhật khóa")
+                            Text("Lưu thiết lập", maxLines = 1)
                         }
 
                         OutlinedButton(
                             onClick = {
                                 onResetApiKey()
-                                Toast.makeText(context, "Đã khôi phục API Key khuyên dùng", Toast.LENGTH_SHORT).show()
+                                onResetBaseUrl()
+                                keyInput = apiKey
+                                urlInput = baseUrl
+                                Toast.makeText(context, "Đã khôi phục mặc định", Toast.LENGTH_SHORT).show()
                             },
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("Khôi phục mặc định", fontSize = 11.sp, textAlign = TextAlign.Center)
+                            Text("Khôi phục", fontSize = 11.sp, textAlign = TextAlign.Center, maxLines = 1)
                         }
+                    }
+                }
+            }
+        }
+
+        item {
+            Text(
+                text = "Cấu hình tự động bằng lệnh CURL",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(vertical = 4.dp)
+            )
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Bạn có thể dán trực tiếp câu lệnh 'curl -X POST ...' chứa mã token và URL endpoint máy chủ của bạn vào đây. Hệ thống sẽ tự phân tích và điền các tham số cài đặt cho bạn.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    OutlinedTextField(
+                        value = curlInput,
+                        onValueChange = { curlInput = it },
+                        label = { Text("Dán câu lệnh curl mẫu") },
+                        modifier = Modifier.fillMaxWidth(),
+                        minLines = 3,
+                        maxLines = 6
+                    )
+
+                    Button(
+                        onClick = {
+                            val trimmedCurl = curlInput.trim()
+                            if (trimmedCurl.lowercase().startsWith("curl")) {
+                                val bearerRegex = """Authorization:\s*Bearer\s+([^\s"'\\]+)""".toRegex(RegexOption.IGNORE_CASE)
+                                val bearerMatch = bearerRegex.find(trimmedCurl)
+                                val token = bearerMatch?.groupValues?.get(1)
+
+                                val urlRegex = """https?://[^\s"'\\]+""".toRegex()
+                                val urlMatch = urlRegex.find(trimmedCurl)
+                                val fullUrl = urlMatch?.value
+
+                                var gotAnything = false
+                                if (token != null && token.isNotEmpty() && token != "YOUR_API_KEY") {
+                                    keyInput = token
+                                    onSaveApiKey(token)
+                                    gotAnything = true
+                                }
+                                if (fullUrl != null && fullUrl.isNotEmpty()) {
+                                    try {
+                                        val parsedUrl = fullUrl.toHttpUrlOrNull()
+                                        if (parsedUrl != null) {
+                                            val baseUrlRebuilt = "${parsedUrl.scheme}://${parsedUrl.host}${if (parsedUrl.port != 80 && parsedUrl.port != 443) ":${parsedUrl.port}" else ""}/"
+                                            urlInput = baseUrlRebuilt
+                                            onSaveBaseUrl(baseUrlRebuilt)
+                                            gotAnything = true
+                                        }
+                                    } catch (e: Exception) {
+                                        e.printStackTrace()
+                                    }
+                                }
+
+                                if (gotAnything) {
+                                    Toast.makeText(context, "Đã áp dụng và lưu cấu hình từ CURL thành công!", Toast.LENGTH_LONG).show()
+                                    curlInput = ""
+                                } else {
+                                    Toast.makeText(context, "Không thể phân tách mã hoặc URL từ CURL này. Vui lòng kiểm tra lại.", Toast.LENGTH_LONG).show()
+                                }
+                            } else {
+                                Toast.makeText(context, "Đây không phải là một câu lệnh CURL hợp lệ (cần bắt đầu bằng 'curl').", Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.secondary
+                        )
+                    ) {
+                        Text("Phân tách & Áp dụng CURL", fontWeight = FontWeight.Bold)
                     }
                 }
             }
@@ -1218,13 +1337,16 @@ fun ImageDetailsDialog(
 @Composable
 fun QuickApiKeyDialog(
     currentApiKey: String,
+    currentBaseUrl: String,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit,
-    onReset: () -> Unit
+    onSave: (String, String) -> Unit,
+    onReset: () -> Unit,
+    onParseCurl: (String) -> Boolean
 ) {
     var keyInput by remember(currentApiKey) { mutableStateOf(currentApiKey) }
+    var urlInput by remember(currentBaseUrl) { mutableStateOf(currentBaseUrl) }
+    var curlInput by remember { mutableStateOf("") }
     var showPassword by remember { mutableStateOf(false) }
-    val context = LocalContext.current
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -1253,16 +1375,54 @@ fun QuickApiKeyDialog(
                         modifier = Modifier.size(24.dp)
                     )
                     Text(
-                        text = "Thiết lập API Key Nhanh",
+                        text = "Thiết lập API & CURL Nhanh",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold
                     )
                 }
 
                 Text(
-                    text = "Dán mã khóa Authorization Bearer của đại lý Space-Z vào đây để dùng cho việc Chat và Tạo Ảnh AI.",
+                    text = "Dán mã khóa Authorization Space-Z hoặc dán toàn bộ câu lệnh CURL dưới đây. Hệ thống sẽ tự động bóc tách thông tin và tự điền trường dữ liệu thích hợp.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                // Curl Input parser field
+                OutlinedTextField(
+                    value = curlInput,
+                    onValueChange = { 
+                        curlInput = it
+                        val trimmed = it.trim()
+                        if (trimmed.lowercase().startsWith("curl")) {
+                            val bearerRegex = """Authorization:\s*Bearer\s+([^\s"'\\]+)""".toRegex(RegexOption.IGNORE_CASE)
+                            val bearerMatch = bearerRegex.find(trimmed)
+                            val token = bearerMatch?.groupValues?.get(1)
+
+                            val urlRegex = """https?://[^\s"'\\]+""".toRegex()
+                            val urlMatch = urlRegex.find(trimmed)
+                            val fullUrl = urlMatch?.value
+
+                            if (token != null && token.isNotEmpty() && token != "YOUR_API_KEY") {
+                                keyInput = token
+                            }
+                            if (fullUrl != null && fullUrl.isNotEmpty()) {
+                                try {
+                                    val parsedUrl = fullUrl.toHttpUrlOrNull()
+                                    if (parsedUrl != null) {
+                                        val baseUrlRebuilt = "${parsedUrl.scheme}://${parsedUrl.host}${if (parsedUrl.port != 80 && parsedUrl.port != 443) ":${parsedUrl.port}" else ""}/"
+                                        urlInput = baseUrlRebuilt
+                                    }
+                                } catch (e: Exception) {
+                                    e.printStackTrace()
+                                }
+                            }
+                        }
+                    },
+                    label = { Text("Dán câu lệnh curl (Tùy chọn)") },
+                    placeholder = { Text("curl -X POST https://...") },
+                    modifier = Modifier.fillMaxWidth(),
+                    maxLines = 2,
+                    singleLine = false
                 )
 
                 OutlinedTextField(
@@ -1282,6 +1442,14 @@ fun QuickApiKeyDialog(
                     }
                 )
 
+                OutlinedTextField(
+                    value = urlInput,
+                    onValueChange = { urlInput = it },
+                    label = { Text("Base API URL") },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true
+                )
+
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1292,13 +1460,13 @@ fun QuickApiKeyDialog(
                         },
                         modifier = Modifier.weight(1f)
                     ) {
-                        Text("Khôi phục", fontSize = 12.sp)
+                        Text("Mặc định", fontSize = 12.sp)
                     }
 
                     Button(
                         onClick = {
-                            if (keyInput.trim().isNotEmpty()) {
-                                onSave(keyInput.trim())
+                            if (keyInput.trim().isNotEmpty() && urlInput.trim().isNotEmpty()) {
+                                onSave(keyInput.trim(), urlInput.trim())
                             }
                         },
                         modifier = Modifier.weight(1.2f)
