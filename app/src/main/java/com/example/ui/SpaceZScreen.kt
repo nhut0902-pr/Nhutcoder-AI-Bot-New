@@ -323,6 +323,70 @@ fun SpaceZScreen(
     }
 }
 
+private fun sendLocalNotification(context: android.content.Context, title: String, message: String) {
+    try {
+        val channelId = "spacez_chat_updates"
+        val notificationManager = context.getSystemService(android.content.Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+            val channel = android.app.NotificationChannel(
+                channelId,
+                "SpaceZ AI Updates",
+                android.app.NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                description = "Thông tin phản hồi từ AI"
+            }
+            notificationManager.createNotificationChannel(channel)
+        }
+        
+        val intent = context.packageManager.getLaunchIntentForPackage(context.packageName)?.apply {
+            flags = android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP or android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            context,
+            0,
+            intent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        
+        val builder = androidx.core.app.NotificationCompat.Builder(context, channelId)
+            .setSmallIcon(android.R.drawable.stat_notify_chat)
+            .setContentTitle(title)
+            .setContentText(message)
+            .setStyle(androidx.core.app.NotificationCompat.BigTextStyle().bigText(message))
+            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+            .setAutoCancel(true)
+            .setContentIntent(pendingIntent)
+            
+        notificationManager.notify(1001, builder.build())
+    } catch (e: Exception) {
+        e.printStackTrace()
+    }
+}
+
+private fun getMorningGreeting(): String {
+    val hour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+    return when (hour) {
+        in 5..11 -> "Chào buổi sáng rực rỡ! ☀️"
+        in 12..17 -> "Chào buổi chiều an lành! 🌅"
+        in 18..21 -> "Chào buổi tối ấm áp! 🌌"
+        else -> "Đêm khuya rồi, chúc ngủ ngon! 🌙"
+    }
+}
+
+private fun getQuoteOfTheDay(): String {
+    val quotes = listOf(
+        "Kỹ thuật là biến kiến thức khoa học thành giải pháp thực tế.",
+        "Mỗi dòng code đều là một bước tiến mới của sáng tạo.",
+        "Sự xuất sắc không phải là một hành động mà là một thói quen.",
+        "Hãy luôn tò mò, khám phá những chân trời công nghệ mới.",
+        "Mọi vấn đề phức tạp đều có thể giải quyết nếu chia đủ nhỏ.",
+        "Bắt đầu ngày mới tràn đầy cảm hứng sáng tạo cùng SpaceZ AI!"
+    )
+    val day = java.util.Calendar.getInstance().get(java.util.Calendar.DAY_OF_MONTH)
+    return quotes[day % quotes.size]
+}
+
 @Composable
 fun ChatTabContent(
     messages: List<MessageEntity>,
@@ -350,6 +414,64 @@ fun ChatTabContent(
     var attachedImageUri by remember { mutableStateOf<Uri?>(null) }
     var attachedImageB64 by remember { mutableStateOf<String?>(null) }
     var showAddBotDialog by remember { mutableStateOf(false) }
+
+    // State parameters for newly integrated smart widgets
+    var isBackgroundChatEnabled by remember { mutableStateOf(false) }
+    var isWidgetHubExpanded by remember { mutableStateOf(true) }
+    var showGreetingDialog by remember { mutableStateOf(false) }
+    var showAiChatDialog by remember { mutableStateOf(false) }
+    var showShareDialog by remember { mutableStateOf(false) }
+
+    // Request permission launcher for local notifications
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted: Boolean ->
+        isBackgroundChatEnabled = isGranted
+        if (isGranted) {
+            Toast.makeText(context, "Đã bật chế độ nền & thông báo nhận tin! 🔔", Toast.LENGTH_SHORT).show()
+        } else {
+            Toast.makeText(context, "Chưa cấp quyền thông báo. Vui lòng cấp quyền trong cài đặt.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    val checkAndToggleBackgroundMode = {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
+            val permissionCheck = androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.POST_NOTIFICATIONS)
+            if (permissionCheck == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                isBackgroundChatEnabled = !isBackgroundChatEnabled
+                if (isBackgroundChatEnabled) {
+                    Toast.makeText(context, "Đã bật chế độ nền & thông báo nhận tin! 🔔", Toast.LENGTH_SHORT).show()
+                } else {
+                    Toast.makeText(context, "Đã tắt chế độ nền.", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                permissionLauncher.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+            }
+        } else {
+            isBackgroundChatEnabled = !isBackgroundChatEnabled
+            if (isBackgroundChatEnabled) {
+                Toast.makeText(context, "Đã bật chế độ nền & thông báo nhận tin! 🔔", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(context, "Đã tắt chế độ nền.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    // Trigger local notification when a new bot message response arrives in background or active mode
+    var lastIsLoading by remember { mutableStateOf(false) }
+    LaunchedEffect(isLoading) {
+        if (lastIsLoading && !isLoading && isBackgroundChatEnabled) {
+            val lastMessage = messages.lastOrNull { it.role != "user" }
+            if (lastMessage != null) {
+                sendLocalNotification(
+                    context = context,
+                    title = "✨ Phản hồi từ ${selectedBot.name}",
+                    message = lastMessage.content
+                )
+            }
+        }
+        lastIsLoading = isLoading
+    }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
@@ -463,6 +585,593 @@ fun ChatTabContent(
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
+                    }
+                }
+            }
+        }
+
+        // ⚡ Trung tâm Widgets và Tiện ích Thông minh SpaceZ
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 6.dp),
+            shape = RoundedCornerShape(12.dp),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+            ),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+        ) {
+            Column(modifier = Modifier.padding(10.dp)) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isWidgetHubExpanded = !isWidgetHubExpanded },
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Widgets,
+                            contentDescription = "Widgets",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Text(
+                            text = "⚡ Tiện ích thông minh SpaceZ",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.padding(start = 2.dp)
+                        ) {
+                            Text(
+                                text = "MỚI",
+                                fontSize = 8.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Icon(
+                        imageVector = if (isWidgetHubExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                        contentDescription = "Toggle Expand",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                AnimatedVisibility(
+                    visible = isWidgetHubExpanded,
+                    enter = fadeIn() + expandVertically(),
+                    exit = fadeOut() + shrinkVertically()
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(8.dp))
+                        LazyRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            contentPadding = PaddingValues(end = 8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            // WIDGET 1: CHÀO BUỔI SÁNG
+                            item {
+                                val currentHour = java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
+                                val (greetingName, iconEmoji) = when (currentHour) {
+                                    in 5..11 -> Pair("Chào Buổi Sáng", "☀️")
+                                    in 12..17 -> Pair("Chào Buổi Chiều", "🌅")
+                                    in 18..21 -> Pair("Chào Buổi Tối", "🌌")
+                                    else -> Pair("Chào Bạn Đêm Khuya", "🌙")
+                                }
+                                Card(
+                                    modifier = Modifier
+                                        .width(140.dp)
+                                        .clickable { showGreetingDialog = true },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(text = iconEmoji, fontSize = 20.sp)
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = greetingName,
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                        Text(
+                                            text = "Gợi ý & quote ngày",
+                                            fontSize = 8.5.sp,
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // WIDGET 2: AI CHAT CHUYÊN SÂU
+                            item {
+                                Card(
+                                    modifier = Modifier
+                                        .width(140.dp)
+                                        .clickable { showAiChatDialog = true },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(text = "🤖", fontSize = 20.sp)
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = "Ý tưởng AI Chat",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                                        )
+                                        Text(
+                                            text = "Dùng thử prompt mẫu",
+                                            fontSize = 8.5.sp,
+                                            color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // WIDGET 3: CHAT CHẾ ĐỘ NỀN
+                            item {
+                                Card(
+                                    modifier = Modifier
+                                        .width(140.dp)
+                                        .clickable { checkAndToggleBackgroundMode() },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = if (isBackgroundChatEnabled) 
+                                            MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.7f) 
+                                        else 
+                                            MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
+                                    ),
+                                    border = BorderStroke(
+                                        width = 1.dp,
+                                        color = if (isBackgroundChatEnabled) MaterialTheme.colorScheme.tertiary else Color.Transparent
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Text(text = "🛡️", fontSize = 20.sp)
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(6.dp)
+                                                    .clip(CircleShape)
+                                                    .background(if (isBackgroundChatEnabled) Color.Green else Color.LightGray)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = "Chế Độ Nền",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = if (isBackgroundChatEnabled) MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = if (isBackgroundChatEnabled) "Đang bật chạy nền 🟢" else "Nhấp để bật đẩy nền",
+                                            fontSize = 8.5.sp,
+                                            color = if (isBackgroundChatEnabled) MaterialTheme.colorScheme.onTertiaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // WIDGET 4: CHIA SẺ MÀN HÌNH / SCREEN TRANSCRIPT
+                            item {
+                                Card(
+                                    modifier = Modifier
+                                        .width(140.dp)
+                                        .clickable { showShareDialog = true },
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                    ),
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Column(modifier = Modifier.padding(8.dp)) {
+                                        Text(text = "📤", fontSize = 20.sp)
+                                        Spacer(modifier = Modifier.height(3.dp))
+                                        Text(
+                                            text = "Chia sẻ cuộc họp",
+                                            fontWeight = FontWeight.Bold,
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                        Text(
+                                            text = "Tóm tắt & chia sẻ",
+                                            fontSize = 8.5.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // --- HỘI THOẠI POPUPS VÀ BẢNG THÔNG TIN ---
+
+        // 1. Dialog Chào Buổi Sáng
+        if (showGreetingDialog) {
+            Dialog(onDismissRequest = { showGreetingDialog = false }) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text("☀️", fontSize = 28.sp)
+                            Column {
+                                Text(
+                                    text = getMorningGreeting(),
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = java.text.SimpleDateFormat("EEEE, dd/MM/yyyy", java.util.Locale("vi", "VN")).format(java.util.Date()),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        // Quote section
+                        Card(
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.2f)
+                            ),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "💡 Câu nói truyền cảm hứng sáng nay:",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Text(
+                                    text = "\"${getQuoteOfTheDay()}\"",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    fontStyle = FontStyle.Italic,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+
+                        Text(
+                            text = "✍️ Chọn nhanh hành động sáng nay:",
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+
+                        val morningPrompts = listOf(
+                            Pair("🗓️ Lập lịch làm việc", "Chào buổi sáng! Hãy giúp tôi lập một thời khóa biểu làm việc cá nhân hiệu quả và cân bằng nhất cho hôm nay."),
+                            Pair("☕ mini-project rèn luyện", "Tôi muốn làm ấm bộ não lập trình sáng nay, hãy giao cho tôi một thử thách thuật toán Kotlin/Jetpack Compose cơ bản kèm gợi ý cách giải chi tiết."),
+                            Pair("📝 Top 5 việc ưu tiên", "Hãy tạo một danh sách checklist 5 việc cần làm của lập trình viên chuẩn mực buổi sáng để giữ tỉnh táo và năng suất tối đa.")
+                        )
+
+                        morningPrompts.forEach { (title, prompt) ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        inputText = prompt
+                                        showGreetingDialog = false
+                                        Toast.makeText(context, "Đã chọn nhiệm vụ buổi sáng! Chúc bạn ngày mới tốt lành 🚀", Toast.LENGTH_SHORT).show()
+                                    },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = title,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.weight(1f))
+                                    Icon(
+                                        imageVector = Icons.Default.ChevronRight,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f),
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(onClick = { showGreetingDialog = false }) {
+                                Text("Đóng", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Dialog Các Ý Tưởng AI Chat Gợi Ý
+        if (showAiChatDialog) {
+            Dialog(onDismissRequest = { showAiChatDialog = false }) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Text(
+                            text = "🤖 Gợi ý phím tắt hội thoại AI",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.secondary
+                        )
+                        Text(
+                            text = "Chọn một prompt cấu trúc chất lượng cao dưới đây để khởi động trợ lý ảo của bạn nhanh chóng:",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                        )
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        val presets = listOf(
+                            Triple("🎓 Luyện tiếng Anh", "English Practice", "Hãy đóng vai là một chuyên gia giáo dục và giáo viên dạy tiếng Anh vui tính. Gợi ý cho tôi một chủ đề cuộc sống thú vị để bắt đầu luyện tập hội thoại nhé."),
+                            Triple("💻 Viết & Gỡ Lỗi Code", "Code Debugger", "Hãy đóng vai là Kỹ sư phần mềm xuất sắc. Tôi đang cần tư vấn giải pháp viết mã tối ưu bộ nhớ khi vẽ canvas trong Jetpack Compose. Gợi ý cho tôi các tips tốt nhất."),
+                            Triple("📝 Tóm tắt tri thức", "Smart Explainer", "Giải thích cơ chế hoạt động của mô hình ngôn ngữ lớn (LLM) và sinh ảnh AI (Diffusion Model) bằng một ngôn ngữ siêu giản dị, ẩn dụ thực tế ví dụ dễ hiểu cho trẻ em 10 tuổi.")
+                        )
+
+                        presets.forEach { (label, subtitle, textVal) ->
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable {
+                                        inputText = textVal
+                                        showAiChatDialog = false
+                                        Toast.makeText(context, "Đã áp dụng mẫu prompt phím tắt AI! 🧠", Toast.LENGTH_SHORT).show()
+                                    },
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.surface
+                                ),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f))
+                            ) {
+                                Column(modifier = Modifier.padding(12.dp)) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = label,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Text(
+                                            text = "($subtitle)",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                                        )
+                                    }
+                                    Spacer(modifier = Modifier.height(3.dp))
+                                    Text(
+                                        text = textVal,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(onClick = { showAiChatDialog = false }) {
+                                Text("Đóng", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3. Dialog Chia Sẻ Màn Hình (Screen Transcript)
+        if (showShareDialog) {
+            Dialog(onDismissRequest = { showShareDialog = false }) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("📤", fontSize = 28.sp)
+                            Column {
+                                Text(
+                                    text = "Chia sẻ cuộc trò chuyện",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                Text(
+                                    text = "Đang kết nối xuất bản và chia sẻ màn hình thông minh...",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                                )
+                            }
+                        }
+
+                        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+                        if (messages.isEmpty()) {
+                            Text(
+                                text = "Lịch sử trò chuyện hiện trống. Hãy gửi vài tin nhắn trước khi thực hiện chia sẻ màn hình hội thoại nhé!",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp)
+                            )
+                        } else {
+                            Text(
+                                text = "Hội thọại đã chọn gồm ${messages.size} tin nhắn cùng ${selectedBot.emoji} ${selectedBot.name}. Bạn có thể tóm tắt nhanh và chia sẻ nội dung này:",
+                                style = MaterialTheme.typography.labelLarge,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            // Mock scrollable graphic view of the formatted layout to simulate screen share sheet
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(130.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f))
+                                    .padding(8.dp)
+                            ) {
+                                LazyColumn(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                    item {
+                                        Text(
+                                            text = "🌌 MOCK BANNER SHARE SHEET - SPACEZ AI",
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        Spacer(modifier = Modifier.height(4.dp))
+                                    }
+                                    items(messages.take(3)) { m ->
+                                        Text(
+                                            text = "${if (m.role == "user") "👥 Bạn" else "${selectedBot.emoji} ${selectedBot.name}"}: ${m.content}",
+                                            fontSize = 9.sp,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            maxLines = 2,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    if (messages.size > 3) {
+                                        item {
+                                            Text(
+                                                text = "... và ${messages.size - 3} tin nhắn khác ...",
+                                                fontSize = 8.sp,
+                                                fontStyle = FontStyle.Italic,
+                                                color = MaterialTheme.colorScheme.primary
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                OutlinedButton(
+                                    modifier = Modifier.weight(1f),
+                                    onClick = {
+                                        val textBuilder = java.lang.StringBuilder()
+                                        textBuilder.append("🌌 NHẬT KÝ CHIA SẺ SPACEZ AI AT: ${java.text.DateFormat.getDateTimeInstance().format(java.util.Date())}\n")
+                                        textBuilder.append("Trợ lý ảo: ${selectedBot.emoji} ${selectedBot.name}\n")
+                                        textBuilder.append("==================================================\n\n")
+                                        messages.forEach { msg ->
+                                            val authorName = if (msg.role == "user") "Bạn" else selectedBot.name
+                                            textBuilder.append("[${if (msg.role == "user") "Người dùng" else "Trợ lý Robo"}] $authorName: ${msg.content}\n\n")
+                                        }
+                                        textBuilder.append("==================================================\n")
+                                        textBuilder.append("Được tạo và tóm tắt thông thái bằng SpaceZ AI.")
+
+                                        clipboardManager.setText(AnnotatedString(textBuilder.toString()))
+                                        Toast.makeText(context, "Đã sao chép nội dung hội thoại cuộc họp vào khay nhớ tạm! 📋", Toast.LENGTH_SHORT).show()
+                                        showShareDialog = false
+                                    }
+                                ) {
+                                    Text("Sao chép", fontSize = 12.sp)
+                                }
+
+                                Button(
+                                    modifier = Modifier.weight(1.2f),
+                                    onClick = {
+                                        val textBuilder = java.lang.StringBuilder()
+                                        textBuilder.append("🌌 CHIA SẺ MÀN HÌNH SPACEZ AI CHAT TRONG NGÀY 🌌\n")
+                                        textBuilder.append("Lịch sử hội thoại trò chuyện cùng ${selectedBot.name}\n")
+                                        textBuilder.append("--------------------------------------------------\n\n")
+                                        messages.forEach { msg ->
+                                            val authorName = if (msg.role == "user") "Bạn" else selectedBot.name
+                                            textBuilder.append("${if (msg.role == "user") "👤 Bạn" else "${selectedBot.emoji} ${selectedBot.name}"}: ${msg.content}\n\n")
+                                        }
+                                        textBuilder.append("--------------------------------------------------\n")
+                                        textBuilder.append("Được xuất bản nhanh từ SpaceZ client.")
+
+                                        val shareIntent = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                            type = "text/plain"
+                                            putExtra(android.content.Intent.EXTRA_SUBJECT, "Nhật ký chia sẻ hội thoại SpaceZ - ${selectedBot.name}")
+                                            putExtra(android.content.Intent.EXTRA_TEXT, textBuilder.toString())
+                                        }
+                                        context.startActivity(android.content.Intent.createChooser(shareIntent, "Chia sẻ cuộc họp hội thoại qua..."))
+                                        showShareDialog = false
+                                    }
+                                ) {
+                                    Text("Chia sẻ ngay", fontSize = 12.sp)
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End
+                        ) {
+                            TextButton(onClick = { showShareDialog = false }) {
+                                Text("Đóng", fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                     }
                 }
             }
