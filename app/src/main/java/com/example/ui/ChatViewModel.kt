@@ -164,6 +164,16 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val _imageSize = MutableStateFlow("1024x1024")
     val imageSize: StateFlow<String> = _imageSize.asStateFlow()
 
+    // Interactive Launcher Widget/Shortcut Actions Flow
+    private val _pendingAction = kotlinx.coroutines.flow.MutableSharedFlow<String>(extraBufferCapacity = 1)
+    val pendingAction = _pendingAction.asSharedFlow()
+
+    fun triggerAction(action: String) {
+        viewModelScope.launch {
+            _pendingAction.emit(action)
+        }
+    }
+
     private val repository: SpaceZRepository
 
     private fun createApiService(url: String): SpaceZApiService {

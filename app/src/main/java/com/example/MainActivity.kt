@@ -17,6 +17,10 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
+    
+    // Handle shortcut or widget click intent on launch
+    handleIntent(intent)
+
     setContent {
       MyApplicationTheme {
         SpaceZScreen(
@@ -24,6 +28,23 @@ class MainActivity : ComponentActivity() {
           modifier = Modifier.fillMaxSize()
         )
       }
+    }
+  }
+
+  override fun onNewIntent(intent: android.content.Intent) {
+    super.onNewIntent(intent)
+    setIntent(intent)
+    handleIntent(intent)
+  }
+
+  private fun handleIntent(intent: android.content.Intent?) {
+    val action = intent?.action
+    if (action != null && action.startsWith("com.example.ACTION_")) {
+      viewModel.triggerAction(action)
+    }
+    val widgetExtra = intent?.getStringExtra("WIDGET_ACTION")
+    if (widgetExtra != null) {
+      viewModel.triggerAction(widgetExtra)
     }
   }
 }

@@ -1,3 +1,13 @@
 <resources>
     <string name="app_name">SpaceZ AI</string>
+    <string name="shortcut_morning_greeting">Chào buổi sáng ☀️</string>
+    <string name="shortcut_morning_greeting_long">SpaceZ Chào buổi sáng ☀️</string>
+    <string name="shortcut_ai_chat">AI Chat 🤖</string>
+    <string name="shortcut_ai_chat_long">SpaceZ AI Chat 🤖</string>
+    <string name="shortcut_background">Chế độ nền 🛡️</string>
+    <string name="shortcut_background_long">Bật/Tắt chế độ nền 🛡️</string>
+    <string name="shortcut_share">Chia sẻ cuộc họp 📤</string>
+    <string name="shortcut_share_long">Chia sẻ hội thoại cuộc họp SpaceZ 📤</string>
+    <string name="widget_name">SpaceZ AI Widgets</string>
+    <string name="widget_description">Tiện ích tóm tắt thông minh và truy cập nhanh SpaceZ</string>
 </resources>

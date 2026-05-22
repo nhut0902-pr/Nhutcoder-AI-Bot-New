@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="morning_greeting"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_today"
+        android:shortcutShortLabel="@string/shortcut_morning_greeting"
+        android:shortcutLongLabel="@string/shortcut_morning_greeting_long">
+        <intent
+            android:action="com.example.ACTION_MORNING_GREETING"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="ai_chat"
+        android:enabled="true"
+        android:icon="@android:drawable/stat_notify_chat"
+        android:shortcutShortLabel="@string/shortcut_ai_chat"
+        android:shortcutLongLabel="@string/shortcut_ai_chat_long">
+        <intent
+            android:action="com.example.ACTION_AI_CHAT"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="background_mode"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_lock_silent_mode"
+        android:shortcutShortLabel="@string/shortcut_background"
+        android:shortcutLongLabel="@string/shortcut_background_long">
+        <intent
+            android:action="com.example.ACTION_BACKGROUND_MODE"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="share_screen"
+        android:enabled="true"
+        android:icon="@android:drawable/ic_menu_share"
+        android:shortcutShortLabel="@string/shortcut_share"
+        android:shortcutLongLabel="@string/shortcut_share_long">
+        <intent
+            android:action="com.example.ACTION_SHARE_SCREEN"
+            android:targetPackage="com.example"
+            android:targetClass="com.example.MainActivity" />
+    </shortcut>
+</shortcuts>

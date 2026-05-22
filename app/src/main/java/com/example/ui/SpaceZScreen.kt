@@ -259,7 +259,8 @@ fun SpaceZScreen(
                     onToggleDrawingMode = { viewModel.setDrawingMode(it) },
                     onSendMessage = { text, img -> viewModel.handleSend(text, img) },
                     onDeleteMessage = { viewModel.deleteMessage(it) },
-                    onConfigApiKey = { showApiKeyDialog = true }
+                    onConfigApiKey = { showApiKeyDialog = true },
+                    pendingAction = viewModel.pendingAction
                 )
                 1 -> GalleryTabContent(
                     images = galleryImages,
@@ -403,7 +404,8 @@ fun ChatTabContent(
     onToggleDrawingMode: (Boolean) -> Unit,
     onSendMessage: (String, String?) -> Unit,
     onDeleteMessage: (Int) -> Unit,
-    onConfigApiKey: () -> Unit
+    onConfigApiKey: () -> Unit,
+    pendingAction: kotlinx.coroutines.flow.SharedFlow<String>
 ) {
     var inputText by remember { mutableStateOf("") }
     val listState = rememberLazyListState()
@@ -471,6 +473,26 @@ fun ChatTabContent(
             }
         }
         lastIsLoading = isLoading
+    }
+
+    // Observe action triggers from widgets or app shortcuts
+    LaunchedEffect(Unit) {
+        pendingAction.collect { action ->
+            when (action) {
+                "com.example.ACTION_MORNING_GREETING" -> {
+                    showGreetingDialog = true
+                }
+                "com.example.ACTION_AI_CHAT" -> {
+                    showAiChatDialog = true
+                }
+                "com.example.ACTION_BACKGROUND_MODE" -> {
+                    checkAndToggleBackgroundMode()
+                }
+                "com.example.ACTION_SHARE_SCREEN" -> {
+                    showShareDialog = true
+                }
+            }
+        }
     }
 
     val imagePickerLauncher = rememberLauncherForActivityResult(
