@@ -49,10 +49,35 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
+import coil.request.ImageRequest
 import com.example.R
 import com.example.database.MessageEntity
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+
+@Composable
+fun rememberAuthenticatedImageRequest(url: String?, apiKey: String, baseUrl: String): Any? {
+    val context = LocalContext.current
+    return remember(url, apiKey, baseUrl) {
+        if (url == null || url.isEmpty()) return@remember null
+        
+        // Resolve relative URLs if needed
+        val resolvedUrl = when {
+            url.startsWith("http://") || url.startsWith("https://") -> url
+            else -> {
+                val cleanedBase = baseUrl.trimEnd('/')
+                val cleanedPath = url.trimStart('/')
+                "$cleanedBase/$cleanedPath"
+            }
+        }
+        
+        ImageRequest.Builder(context)
+            .data(resolvedUrl)
+            .setHeader("Authorization", "Bearer $apiKey")
+            .crossfade(true)
+            .build()
+    }
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -197,6 +222,8 @@ fun SpaceZScreen(
                     messages = messages,
                     isDrawingMode = isDrawingMode,
                     isLoading = isLoading,
+                    apiKey = apiKey,
+                    baseUrl = baseUrl,
                     onToggleDrawingMode = { viewModel.setDrawingMode(it) },
                     onSendMessage = { viewModel.handleSend(it) },
                     onDeleteMessage = { viewModel.deleteMessage(it) },
@@ -204,6 +231,8 @@ fun SpaceZScreen(
                 )
                 1 -> GalleryTabContent(
                     images = galleryImages,
+                    apiKey = apiKey,
+                    baseUrl = baseUrl,
                     onImageClick = { selectedDetailImage = it }
                 )
                 2 -> SettingsTabContent(
@@ -225,6 +254,8 @@ fun SpaceZScreen(
     selectedDetailImage?.let { msg ->
         ImageDetailsDialog(
             message = msg,
+            apiKey = apiKey,
+            baseUrl = baseUrl,
             onDismiss = { selectedDetailImage = null },
             onDelete = {
                 viewModel.deleteMessage(msg.id)
@@ -265,6 +296,8 @@ fun ChatTabContent(
     messages: List<MessageEntity>,
     isDrawingMode: Boolean,
     isLoading: Boolean,
+    apiKey: String,
+    baseUrl: String,
     onToggleDrawingMode: (Boolean) -> Unit,
     onSendMessage: (String) -> Unit,
     onDeleteMessage: (Int) -> Unit,
@@ -416,6 +449,8 @@ fun ChatTabContent(
                 items(messages, key = { it.id }) { msg ->
                     ChatBubble(
                         message = msg,
+                        apiKey = apiKey,
+                        baseUrl = baseUrl,
                         onDelete = { onDeleteMessage(msg.id) },
                         onCopy = {
                             clipboardManager.setText(AnnotatedString(msg.content))
@@ -583,6 +618,8 @@ fun ChatTabContent(
 @Composable
 fun ChatBubble(
     message: MessageEntity,
+    apiKey: String,
+    baseUrl: String,
     onDelete: () -> Unit,
     onCopy: () -> Unit
 ) {
@@ -658,8 +695,9 @@ fun ChatBubble(
                                         .background(Color.Black),
                                     contentAlignment = Alignment.Center
                                 ) {
+                                    val request = rememberAuthenticatedImageRequest(imgUrl, apiKey, baseUrl)
                                     SubcomposeAsyncImage(
-                                        model = imgUrl,
+                                        model = request,
                                         contentDescription = message.content,
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier.fillMaxSize(),
@@ -791,6 +829,8 @@ fun AssistantTypingIndicator() {
 @Composable
 fun GalleryTabContent(
     images: List<MessageEntity>,
+    apiKey: String,
+    baseUrl: String,
     onImageClick: (MessageEntity) -> Unit
 ) {
     if (images.isEmpty()) {
@@ -843,8 +883,9 @@ fun GalleryTabContent(
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Box(modifier = Modifier.fillMaxSize()) {
+                        val request = rememberAuthenticatedImageRequest(msg.imageUrl, apiKey, baseUrl)
                         SubcomposeAsyncImage(
-                            model = msg.imageUrl,
+                            model = request,
                             contentDescription = msg.content,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize(),
@@ -1225,6 +1266,8 @@ fun SettingsTabContent(
 @Composable
 fun ImageDetailsDialog(
     message: MessageEntity,
+    apiKey: String,
+    baseUrl: String,
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
     onCopyPrompt: () -> Unit
@@ -1261,8 +1304,9 @@ fun ImageDetailsDialog(
                         .background(Color.Black),
                     contentAlignment = Alignment.Center
                 ) {
+                    val request = rememberAuthenticatedImageRequest(message.imageUrl, apiKey, baseUrl)
                     SubcomposeAsyncImage(
-                        model = message.imageUrl,
+                        model = request,
                         contentDescription = message.content,
                         contentScale = ContentScale.Fit,
                         modifier = Modifier.fillMaxSize(),
