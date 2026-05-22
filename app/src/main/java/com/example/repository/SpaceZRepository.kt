@@ -35,10 +35,16 @@ class SpaceZRepository(
     suspend fun fetchChatCompletion(
         apiKey: String,
         history: List<MessageEntity>,
-        userMessage: String
+        userMessage: String,
+        systemPrompt: String? = null
     ): MessageEntity {
         // Build the messages payload
         val messagesDto = mutableListOf<ChatMessageDto>()
+        
+        // Include system prompt if active
+        if (!systemPrompt.isNullOrEmpty()) {
+            messagesDto.add(ChatMessageDto(role = "system", content = systemPrompt))
+        }
         
         // Add context from recent history (excluding image messages)
         history.filter { !it.isImage }

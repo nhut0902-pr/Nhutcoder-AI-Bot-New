@@ -38,6 +38,7 @@ data class ChatResponse(
 
 @JsonClass(generateAdapter = true)
 data class ImageRequest(
+    @Json(name = "model") val model: String = "cloud-ai",
     @Json(name = "prompt") val prompt: String,
     @Json(name = "n") val n: Int = 1,
     @Json(name = "size") val size: String = "1024x1024"

@@ -37,6 +37,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -51,6 +52,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.example.R
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import android.net.Uri
+import android.graphics.BitmapFactory
+import android.graphics.Bitmap
+import android.util.Base64
+import java.io.ByteArrayOutputStream
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.itemsIndexed
 import com.example.database.MessageEntity
 import kotlinx.coroutines.launch
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -60,6 +70,20 @@ fun rememberAuthenticatedImageRequest(url: String?, apiKey: String, baseUrl: Str
     val context = LocalContext.current
     return remember(url, apiKey, baseUrl) {
         if (url == null || url.isEmpty()) return@remember null
+        
+        // Handle Base64 Data URIs directly
+        if (url.startsWith("data:image/") && url.contains("base64,")) {
+            try {
+                val base64Data = url.substringAfter("base64,")
+                val decodedBytes = android.util.Base64.decode(base64Data, android.util.Base64.DEFAULT)
+                return@remember ImageRequest.Builder(context)
+                    .data(decodedBytes)
+                    .crossfade(true)
+                    .build()
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
         
         // Resolve relative URLs if needed
         val resolvedUrl = when {
@@ -93,6 +117,10 @@ fun SpaceZScreen(
     val baseUrl by viewModel.baseUrl.collectAsStateWithLifecycle()
     val imageSize by viewModel.imageSize.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
+
+    val selectedBot by viewModel.selectedBot.collectAsStateWithLifecycle()
+    val allBots by viewModel.allBots.collectAsStateWithLifecycle()
+    val isReasoningMode by viewModel.isReasoningMode.collectAsStateWithLifecycle()
 
     var activeTab by remember { mutableStateOf(0) }
     var selectedDetailImage by remember { mutableStateOf<MessageEntity?>(null) }
@@ -128,27 +156,25 @@ fun SpaceZScreen(
                                             MaterialTheme.colorScheme.tertiary
                                         )
                                     )
-                                )
-                                .padding(6.dp),
+                                ),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.AutoAwesome,
-                                contentDescription = "Logo",
-                                tint = Color.White,
-                                modifier = Modifier.size(18.dp)
+                            Text(
+                                text = selectedBot.emoji,
+                                fontSize = 20.sp
                             )
                         }
                         Column {
                             Text(
-                                text = "SpaceZ AI",
+                                text = selectedBot.name,
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Bản dịch vụ ngoại tuyến & trực tuyến",
+                                text = if (isReasoningMode) "Chế độ suy luận logic đang bật" else selectedBot.description,
                                 fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                                color = if (isReasoningMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                                fontWeight = if (isReasoningMode) FontWeight.Bold else FontWeight.Normal
                             )
                         }
                     }
@@ -224,8 +250,14 @@ fun SpaceZScreen(
                     isLoading = isLoading,
                     apiKey = apiKey,
                     baseUrl = baseUrl,
+                    selectedBot = selectedBot,
+                    allBots = allBots,
+                    isReasoningMode = isReasoningMode,
+                    onSelectBot = { viewModel.selectBot(it) },
+                    onAddCustomBot = { name, desc, system, greet, emoji -> viewModel.addCustomBot(name, desc, system, greet, emoji) },
+                    onToggleReasoningMode = { viewModel.setReasoningMode(it) },
                     onToggleDrawingMode = { viewModel.setDrawingMode(it) },
-                    onSendMessage = { viewModel.handleSend(it) },
+                    onSendMessage = { text, img -> viewModel.handleSend(text, img) },
                     onDeleteMessage = { viewModel.deleteMessage(it) },
                     onConfigApiKey = { showApiKeyDialog = true }
                 )
@@ -298,8 +330,14 @@ fun ChatTabContent(
     isLoading: Boolean,
     apiKey: String,
     baseUrl: String,
+    selectedBot: ChatBot,
+    allBots: List<ChatBot>,
+    isReasoningMode: Boolean,
+    onSelectBot: (ChatBot) -> Unit,
+    onAddCustomBot: (String, String, String, String, String) -> Unit,
+    onToggleReasoningMode: (Boolean) -> Unit,
     onToggleDrawingMode: (Boolean) -> Unit,
-    onSendMessage: (String) -> Unit,
+    onSendMessage: (String, String?) -> Unit,
     onDeleteMessage: (Int) -> Unit,
     onConfigApiKey: () -> Unit
 ) {
@@ -308,6 +346,33 @@ fun ChatTabContent(
     val coroutineScope = rememberCoroutineScope()
     val clipboardManager = LocalClipboardManager.current
     val context = LocalContext.current
+
+    var attachedImageUri by remember { mutableStateOf<Uri?>(null) }
+    var attachedImageB64 by remember { mutableStateOf<String?>(null) }
+    var showAddBotDialog by remember { mutableStateOf(false) }
+
+    val imagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            attachedImageUri = uri
+            try {
+                val inputStream = context.contentResolver.openInputStream(uri)
+                val bitmap = BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                if (bitmap != null) {
+                    val outputStream = ByteArrayOutputStream()
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 80, outputStream)
+                    val bytes = outputStream.toByteArray()
+                    val base64String = Base64.encodeToString(bytes, Base64.DEFAULT)
+                    attachedImageB64 = "data:image/jpeg;base64,$base64String"
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+                Toast.makeText(context, "Không thể đọc ảnh: ${e.localizedMessage}", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
 
     // Auto-scroll logic on new responses
     LaunchedEffect(messages.size, isLoading) {
@@ -319,6 +384,175 @@ fun ChatTabContent(
     }
 
     Column(modifier = Modifier.fillMaxSize()) {
+        // Horizontal Switcher for Bot Personas
+        LazyRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(MaterialTheme.colorScheme.surfaceColorAtElevation(1.dp))
+                .padding(vertical = 8.dp, horizontal = 12.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            items(allBots.size) { index ->
+                val bot = allBots[index]
+                val isSelected = bot.id == selectedBot.id
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(
+                        width = 1.dp,
+                        color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+                    ),
+                    modifier = Modifier
+                        .clickable { onSelectBot(bot) }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(bot.emoji, fontSize = 14.sp)
+                        Text(
+                            text = bot.name,
+                            fontSize = 12.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+                }
+            }
+            
+            // Custom bot creation button
+            item {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier
+                        .clickable { showAddBotDialog = true }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text("➕", fontSize = 12.sp)
+                        Text(
+                            text = "Tạo Bot",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        if (showAddBotDialog) {
+            var botName by remember { mutableStateOf("") }
+            var botDesc by remember { mutableStateOf("") }
+            var botGreet by remember { mutableStateOf("") }
+            var botSystem by remember { mutableStateOf("") }
+            var botEmoji by remember { mutableStateOf("🤖") }
+
+            Dialog(onDismissRequest = { showAddBotDialog = false }) {
+                Surface(
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    tonalElevation = 6.dp,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "🤖 Tự tạo Chat Bot cá nhân",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        
+                        OutlinedTextField(
+                            value = botEmoji,
+                            onValueChange = { botEmoji = it },
+                            label = { Text("Biểu tượng (Emoji)") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+                        
+                        OutlinedTextField(
+                            value = botName,
+                            onValueChange = { botName = it },
+                            label = { Text("Tên Bot") },
+                            placeholder = { Text("Ví dụ: Trợ lý Sức Khỏe") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = botDesc,
+                            onValueChange = { botDesc = it },
+                            label = { Text("Mô tả ngắn") },
+                            placeholder = { Text("Ví dụ: Hướng dẫn ăn uống") },
+                            modifier = Modifier.fillMaxWidth(),
+                            singleLine = true
+                        )
+
+                        OutlinedTextField(
+                            value = botGreet,
+                            onValueChange = { botGreet = it },
+                            label = { Text("Lời chào đầu tiên") },
+                            placeholder = { Text("Chào bạn! Có gì cần mình giúp ý kiến sức khoẻ hôm nay? 😊") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 2,
+                            maxLines = 3
+                        )
+
+                        OutlinedTextField(
+                            value = botSystem,
+                            onValueChange = { botSystem = it },
+                            label = { Text("Luật hệ thống (Instructions)") },
+                            placeholder = { Text("Đóng vai là bác sĩ khuyên ăn rau xanh...") },
+                            modifier = Modifier.fillMaxWidth(),
+                            minLines = 3,
+                            maxLines = 4
+                        )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.End,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            TextButton(onClick = { showAddBotDialog = false }) {
+                                Text("Hủy")
+                            }
+                            Button(
+                                onClick = {
+                                    if (botName.trim().isNotEmpty() && botSystem.trim().isNotEmpty()) {
+                                        onAddCustomBot(
+                                            botName.trim(),
+                                            botDesc.trim().ifEmpty { "Bot tự tạo" },
+                                            botSystem.trim(),
+                                            botGreet.trim().ifEmpty { "Xin chào! Mình sẵn sàng phục vụ rồi. 😊" },
+                                            botEmoji.trim().ifEmpty { "🤖" }
+                                        )
+                                        showAddBotDialog = false
+                                    } else {
+                                        Toast.makeText(context, "Vui lòng nhập Tên và Luật hệ thống!", Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            ) {
+                                Text("Tạo Bot")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         if (messages.isEmpty()) {
             Box(
                 modifier = Modifier
@@ -480,36 +714,59 @@ fun ChatTabContent(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 Icon(
-                    imageVector = if (isDrawingMode) Icons.Default.Palette else Icons.Default.Chat,
+                    imageVector = when {
+                        isDrawingMode -> Icons.Default.Palette
+                        isReasoningMode -> Icons.Default.Psychology
+                        else -> Icons.Default.Chat
+                    },
                     contentDescription = null,
-                    tint = if (isDrawingMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                    tint = when {
+                        isDrawingMode -> MaterialTheme.colorScheme.tertiary
+                        isReasoningMode -> MaterialTheme.colorScheme.secondary
+                        else -> MaterialTheme.colorScheme.primary
+                    },
                     modifier = Modifier.size(16.dp)
                 )
                 Text(
-                    text = if (isDrawingMode) "Chế độ: Vẽ tranh nghệ thuật 🎨" else "Chế độ: Trò chuyện Trí tuệ 💬",
+                    text = when {
+                        isDrawingMode -> "Chế độ: Vẽ tranh nghệ thuật 🎨"
+                        isReasoningMode -> "Chế độ: Suy luận chuyên sâu 🧠"
+                        else -> "Chế độ: Trò chuyện Trí tuệ 💬"
+                    },
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (isDrawingMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                    color = when {
+                        isDrawingMode -> MaterialTheme.colorScheme.tertiary
+                        isReasoningMode -> MaterialTheme.colorScheme.secondary
+                        else -> MaterialTheme.colorScheme.primary
+                    }
                 )
             }
 
-            // High-fidelity integrated Segmented Toggle
+            // High-fidelity integrated Segmented Toggle for 3 Modes
             Row(
                 modifier = Modifier
                     .clip(RoundedCornerShape(12.dp))
                     .background(MaterialTheme.colorScheme.surfaceVariant)
                     .padding(2.dp)
             ) {
+                val isChatSelected = !isDrawingMode && !isReasoningMode
+                val isReasoningSelected = !isDrawingMode && isReasoningMode
+                val isDrawingSelected = isDrawingMode
+
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (!isDrawingMode) MaterialTheme.colorScheme.primary else Color.Transparent)
-                        .clickable { onToggleDrawingMode(false) }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .background(if (isChatSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                        .clickable { 
+                            onToggleDrawingMode(false)
+                            onToggleReasoningMode(false)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Text(
                         text = "Chat",
-                        color = if (!isDrawingMode) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (isChatSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -517,13 +774,33 @@ fun ChatTabContent(
                 Box(
                     modifier = Modifier
                         .clip(RoundedCornerShape(10.dp))
-                        .background(if (isDrawingMode) MaterialTheme.colorScheme.tertiary else Color.Transparent)
-                        .clickable { onToggleDrawingMode(true) }
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                        .background(if (isReasoningSelected) MaterialTheme.colorScheme.secondary else Color.Transparent)
+                        .clickable { 
+                            onToggleDrawingMode(false)
+                            onToggleReasoningMode(true)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "Suy luận",
+                        color = if (isReasoningSelected) MaterialTheme.colorScheme.onSecondary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(if (isDrawingSelected) MaterialTheme.colorScheme.tertiary else Color.Transparent)
+                        .clickable { 
+                            onToggleDrawingMode(true)
+                            onToggleReasoningMode(false)
+                        }
+                        .padding(horizontal = 10.dp, vertical = 6.dp)
                 ) {
                     Text(
                         text = "Vẽ ảnh",
-                        color = if (isDrawingMode) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (isDrawingSelected) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onSurfaceVariant,
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -537,81 +814,159 @@ fun ChatTabContent(
             shadowElevation = 8.dp,
             modifier = Modifier.fillMaxWidth()
         ) {
-            Row(
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    .padding(8.dp)
             ) {
-                OutlinedTextField(
-                    value = inputText,
-                    onValueChange = { inputText = it },
-                    placeholder = {
-                        Text(
-                            text = if (isDrawingMode) "Mô tả bức ảnh bạn muốn tạo..." else "Gửi thắc mắc của bạn...",
-                            fontSize = 14.sp
+                // Image preview if attached
+                if (attachedImageUri != null) {
+                    Box(
+                        modifier = Modifier
+                            .padding(start = 8.dp, bottom = 8.dp)
+                            .size(80.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant)
+                    ) {
+                        SubcomposeAsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(attachedImageUri)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "Attached Preview",
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Crop
                         )
-                    },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("chat_input_field"),
-                    maxLines = 4,
-                    shape = RoundedCornerShape(24.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = if (isDrawingMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
-                    ),
-                    keyboardOptions = KeyboardOptions(
-                        imeAction = ImeAction.Send
-                    ),
-                    keyboardActions = KeyboardActions(
-                        onSend = {
-                            if (inputText.isNotBlank() && !isLoading) {
-                                onSendMessage(inputText)
-                                inputText = ""
-                            }
+                        IconButton(
+                            onClick = {
+                                attachedImageUri = null
+                                attachedImageB64 = null
+                            },
+                            modifier = Modifier
+                                .align(Alignment.TopEnd)
+                                .size(24.dp)
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f), CircleShape)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Remove",
+                                modifier = Modifier.size(16.dp),
+                                tint = MaterialTheme.colorScheme.error
+                            )
                         }
-                    )
-                )
+                    }
+                }
 
-                val buttonColor = if (isDrawingMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
-                val contentColor = if (isDrawingMode) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onPrimary
-
-                IconButton(
-                    onClick = {
-                        if (inputText.isNotBlank() && !isLoading) {
-                            onSendMessage(inputText)
-                            inputText = ""
-                        }
-                    },
-                    modifier = Modifier
-                        .size(48.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (inputText.isBlank() || isLoading) {
-                                MaterialTheme.colorScheme.surfaceVariant
-                            } else {
-                                buttonColor
-                            }
-                        )
-                        .testTag("send_button"),
-                    enabled = inputText.isNotBlank() && !isLoading
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Send,
-                        contentDescription = "Gửi",
-                        tint = if (inputText.isBlank() || isLoading) {
-                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
-                        } else {
-                            contentColor
+                    // Photo attachment button (only in Chat / Reasoning mode)
+                    if (!isDrawingMode) {
+                        IconButton(
+                            onClick = { imagePickerLauncher.launch("image/*") },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(CircleShape)
+                                .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f))
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.AddPhotoAlternate,
+                                contentDescription = "Thêm ảnh",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                    }
+
+                    OutlinedTextField(
+                        value = inputText,
+                        onValueChange = { inputText = it },
+                        placeholder = {
+                            Text(
+                                text = if (isDrawingMode) "Mô tả bức ảnh bạn muốn tạo..." else "Gửi thắc mắc của bạn...",
+                                fontSize = 14.sp
+                            )
                         },
-                        modifier = Modifier.size(20.dp)
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("chat_input_field"),
+                        maxLines = 4,
+                        shape = RoundedCornerShape(24.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = if (isDrawingMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                            unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+                        ),
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = ImeAction.Send
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onSend = {
+                                if ((inputText.isNotBlank() || attachedImageB64 != null) && !isLoading) {
+                                    onSendMessage(inputText, attachedImageB64)
+                                    inputText = ""
+                                    attachedImageUri = null
+                                    attachedImageB64 = null
+                                }
+                            }
+                        )
                     )
+
+                    val buttonColor = if (isDrawingMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary
+                    val contentColor = if (isDrawingMode) MaterialTheme.colorScheme.onTertiary else MaterialTheme.colorScheme.onPrimary
+                    val canSend = (inputText.isNotBlank() || attachedImageB64 != null) && !isLoading
+
+                    IconButton(
+                        onClick = {
+                            if (canSend) {
+                                onSendMessage(inputText, attachedImageB64)
+                                inputText = ""
+                                attachedImageUri = null
+                                attachedImageB64 = null
+                            }
+                        },
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape)
+                            .background(
+                                if (!canSend) {
+                                    MaterialTheme.colorScheme.surfaceVariant
+                                } else {
+                                    buttonColor
+                                }
+                            )
+                            .testTag("send_button"),
+                        enabled = canSend
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Send,
+                            contentDescription = "Gửi",
+                            tint = if (!canSend) {
+                                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+                            } else {
+                                contentColor
+                            },
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
             }
         }
     }
+}
+
+fun extractThinkingAndContent(fullText: String): Pair<String?, String> {
+    if (fullText.contains("<think>") && fullText.contains("</think>")) {
+        val thinking = fullText.substringAfter("<think>").substringBefore("</think>").trim()
+        val content = fullText.substringAfter("</think>").trim()
+        return Pair(thinking, content)
+    }
+    if (fullText.contains("<think>")) {
+        val thinking = fullText.substringAfter("<think>").trim()
+        return Pair(thinking, "")
+    }
+    return Pair(null, fullText)
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -625,6 +980,25 @@ fun ChatBubble(
 ) {
     val isUser = message.role == "user"
     val alignment = if (isUser) Alignment.End else Alignment.Start
+
+    var displayedText by remember(message.content) { mutableStateOf("") }
+    val isNewMessage = remember(message.timestamp) {
+        System.currentTimeMillis() - message.timestamp < 10000
+    }
+
+    if (message.role == "assistant" && isNewMessage && !message.isImage) {
+        LaunchedEffect(message.content) {
+            val fullString = message.content
+            for (i in 0..fullString.length) {
+                displayedText = fullString.take(i)
+                kotlinx.coroutines.delay(6)
+            }
+        }
+    } else {
+        displayedText = message.content
+    }
+
+    var thinkingExpanded by remember { mutableStateOf(true) }
 
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -677,6 +1051,26 @@ fun ChatBubble(
                         )
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
+                        // User inline uploads previewing
+                        if (!message.isImage && message.imageUrl != null) {
+                            Box(
+                                modifier = Modifier
+                                    .padding(bottom = 8.dp)
+                                    .size(160.dp)
+                                    .clip(RoundedCornerShape(8.dp))
+                                    .background(Color.Black),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                val request = rememberAuthenticatedImageRequest(message.imageUrl, apiKey, baseUrl)
+                                SubcomposeAsyncImage(
+                                    model = request,
+                                    contentDescription = "Hình ảnh đính kèm",
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier.fillMaxSize(),
+                                )
+                            }
+                        }
+
                         if (message.isImage) {
                             // High fidelity art image render
                             Text(
@@ -735,15 +1129,71 @@ fun ChatBubble(
                                 }
                             }
                         } else {
-                            Text(
-                                text = message.content,
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = when {
-                                    isUser -> MaterialTheme.colorScheme.onPrimaryContainer
-                                    message.content.startsWith("⚠️ Lỗi") -> MaterialTheme.colorScheme.onErrorContainer
-                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                            val (thinking, mainContent) = extractThinkingAndContent(displayedText)
+
+                            Column {
+                                if (thinking != null) {
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.08f),
+                                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(bottom = 8.dp)
+                                            .clickable { thinkingExpanded = !thinkingExpanded }
+                                    ) {
+                                        Column(modifier = Modifier.padding(8.dp)) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Psychology,
+                                                    contentDescription = "Logic suy ngẫm",
+                                                    tint = MaterialTheme.colorScheme.secondary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                                Text(
+                                                    text = "Lập luận suy nghĩ...",
+                                                    style = MaterialTheme.typography.labelSmall,
+                                                    color = MaterialTheme.colorScheme.secondary,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.weight(1f)
+                                                )
+                                                Icon(
+                                                    imageVector = if (thinkingExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                            }
+                                            if (thinkingExpanded) {
+                                                Spacer(modifier = Modifier.height(6.dp))
+                                                Text(
+                                                    text = thinking,
+                                                    style = MaterialTheme.typography.bodySmall.copy(
+                                                        fontStyle = FontStyle.Italic,
+                                                        lineHeight = 16.sp
+                                                    ),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f)
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
-                            )
+
+                                if (mainContent.isNotEmpty() || thinking == null) {
+                                    Text(
+                                        text = mainContent.ifEmpty { "Đang suy luận lập luận..." },
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = when {
+                                            isUser -> MaterialTheme.colorScheme.onPrimaryContainer
+                                            message.content.startsWith("⚠️ Lỗi") -> MaterialTheme.colorScheme.onErrorContainer
+                                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                        }
+                                    )
+                                }
+                            }
                         }
                     }
                 }

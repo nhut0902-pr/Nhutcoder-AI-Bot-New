@@ -17,6 +17,16 @@ import retrofit2.Retrofit
 import retrofit2.converter.moshi.MoshiConverterFactory
 import java.util.concurrent.TimeUnit
 
+data class ChatBot(
+    val id: String,
+    val name: String,
+    val description: String,
+    val systemPrompt: String,
+    val greeting: String,
+    val emoji: String,
+    val isCustom: Boolean = false
+)
+
 class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     private val PREFS_NAME = "spacez_prefs"
@@ -27,6 +37,108 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
     private val DEFAULT_BASE_URL = "https://preview-chat-ac8286e7-6c59-44be-852f-a1ebbfd27ab4.space-z.ai/"
 
     private val sharedPreferences = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+
+    // Preset Bots config
+    val PRESET_BOTS = listOf(
+        ChatBot(
+            id = "companion",
+            name = "SpaceZ AI",
+            description = "Trợ lý đa năng",
+            systemPrompt = "Bạn là SpaceZ AI, một trợ lý đắc lực, thông minh và thân thiện. Hãy trả lời câu hỏi một cách chính xác, ngắn gọn và hữu ích bằng tiếng Việt.",
+            greeting = "Dạ, em nghe ạ! Anh/chị cần trợ giúp gì không ạ? 😊",
+            emoji = "🤖"
+        ),
+        ChatBot(
+            id = "tutor",
+            name = "Gia sư Master",
+            description = "Dạy học & Toán Lý Hoá",
+            systemPrompt = "Bạn là một gia sư giảng dạy chuyên nghiệp, tài giỏi và kiên nhẫn. Khi trả lời câu hỏi về học tập, toán, lý, hóa, văn, ngoại ngữ, hãy chia nhỏ vấn đề và giải thích cặn kẽ từng bước bài bản để học sinh dễ hiểu nhất.",
+            greeting = "Chào bạn! Mình là Gia sư Master giảng dạy học tập. Bạn cần mình giải đáp bài toán hay giải thích bài học nào hôm nay? 🎓",
+            emoji = "🎓"
+        ),
+        ChatBot(
+            id = "coder",
+            name = "Kỹ sư Code",
+            description = "Chuyên gia Lập trình",
+            systemPrompt = "Bạn là một Chuyên gia Lập trình, Kỹ sư Phần mềm cấp cao. Luôn đưa ra lời khuyên thiết kế, phân tích mã nguồn một cách tối ưu, cấu trúc sạch đẹp và viết code chính xác kèm giải thích.",
+            greeting = "Kỹ sư Code xin chào! Bạn đang xây dựng dự án gì đấy? Gửi lỗi hoặc đoạn code cần debug qua đây cho mình nhé! 💻",
+            emoji = "💻"
+        ),
+        ChatBot(
+            id = "philosopher",
+            name = "Triết gia Logic",
+            description = "Lập luận sâu sắc",
+            systemPrompt = "Bạn là một Triết gia logic tài ba, có lối tư duy phản biện. Bạn thích phân tích vấn đề đa chiều và chia sẻ suy luận khách quan.",
+            greeting = "Xin chào nhà tư tưởng! Hãy cùng suy luận và phản biện bất cứ chủ đề hay câu hỏi hóc búa nào bạn muốn nhé. 🧠",
+            emoji = "🧠"
+        ),
+        ChatBot(
+            id = "english",
+            name = "English Coach",
+            description = "Luyện Tiếng Anh",
+            systemPrompt = "You are an expert English Coach. Correct any grammar mistakes in user's Vietnamese or English messages, suggest better vocabulary, and keep the responses highly encouraging. Speak predominantly in English.",
+            greeting = "Hi there! I am your English Coach. Ready to level up your English skills? Ask me anything or just chat with me in English! 🇬🇧",
+            emoji = "🇬🇧"
+        ),
+        ChatBot(
+            id = "alien",
+            name = "Hành tinh Xoẹt",
+            description = "Vui nhộn & Hài hước",
+            systemPrompt = "Bạn là người ngoài hành tinh từ hành tinh Xoẹt xa xôi, vô cùng hài hước, dí dỏm. Luôn dùng các biểu tượng đĩa bay, UFO, người ngoài hành tinh và trả lời đầy ngộ nghĩnh, xem Trái Đất là nơi thích khám phá.",
+            greeting = "Xoẹt... Xoẹt! Sinh vật Trái Đất nghe rõ trả lời! Ta vừa đáp UFO xuống đây để kết bạn với ngươi đây! 👽🚀",
+            emoji = "👽"
+        )
+    )
+
+    // File based Custom bots helper
+    private fun saveCustomBotsToPrefs(bots: List<ChatBot>) {
+        val serialized = bots.filter { it.isCustom }.joinToString(";;;") { 
+            "${it.id}:::${it.name}:::${it.description}:::${it.systemPrompt}:::${it.greeting}:::${it.emoji}"
+        }
+        sharedPreferences.edit().putString("serialized_bots", serialized).apply()
+    }
+
+    private fun loadCustomBotsFromPrefs(): List<ChatBot> {
+        val serialized = sharedPreferences.getString("serialized_bots", "") ?: ""
+        if (serialized.isEmpty()) return emptyList()
+        return serialized.split(";;;").mapNotNull { block ->
+            val parts = block.split(":::")
+            if (parts.size >= 6) {
+                ChatBot(
+                    id = parts[0],
+                    name = parts[1],
+                    description = parts[2],
+                    systemPrompt = parts[3],
+                    greeting = parts[4],
+                    emoji = parts[5],
+                    isCustom = true
+                )
+            } else null
+        }
+    }
+
+    // Active custom bots state list
+    private val _customBots = MutableStateFlow<List<ChatBot>>(emptyList())
+    val customBots: StateFlow<List<ChatBot>> = _customBots.asStateFlow()
+
+    // All available bots helper list
+    private val _allBots = MutableStateFlow<List<ChatBot>>(emptyList())
+    val allBots: StateFlow<List<ChatBot>> = _allBots.asStateFlow()
+
+    private fun updateAllBotsList() {
+        val list = mutableListOf<ChatBot>()
+        list.addAll(PRESET_BOTS)
+        list.addAll(_customBots.value)
+        _allBots.value = list
+    }
+
+    // Selected bot state
+    private val _selectedBot = MutableStateFlow<ChatBot>(PRESET_BOTS[0])
+    val selectedBot: StateFlow<ChatBot> = _selectedBot.asStateFlow()
+
+    // Reasoning/Thinking mode
+    private val _isReasoningMode = MutableStateFlow(false)
+    val isReasoningMode: StateFlow<Boolean> = _isReasoningMode.asStateFlow()
 
     // Api Key state (defaulted to your key, completely ready to go!)
     private val _apiKey = MutableStateFlow(sharedPreferences.getString(KEY_API_KEY, DEFAULT_API_KEY) ?: DEFAULT_API_KEY)
@@ -61,9 +173,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
         val okHttpClient = OkHttpClient.Builder()
             .addInterceptor(loggingInterceptor)
-            .connectTimeout(45, TimeUnit.SECONDS)
-            .readTimeout(45, TimeUnit.SECONDS)
-            .writeTimeout(45, TimeUnit.SECONDS)
+            .connectTimeout(120, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .writeTimeout(120, TimeUnit.SECONDS)
             .build()
 
         val formattedUrl = if (url.endsWith("/")) url else "$url/"
@@ -82,6 +194,57 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         val messageDao = database.messageDao()
         val apiService = createApiService(_baseUrl.value)
         repository = SpaceZRepository(messageDao, apiService)
+
+        // Initialize lists
+        val loadedCustom = loadCustomBotsFromPrefs()
+        _customBots.value = loadedCustom
+        updateAllBotsList()
+
+        // Load active bot preference
+        val activeBotId = sharedPreferences.getString("selected_bot_id", "companion") ?: "companion"
+        val activeBot = _allBots.value.find { it.id == activeBotId } ?: PRESET_BOTS[0]
+        _selectedBot.value = activeBot
+
+        // Load reasoning mode preference
+        _isReasoningMode.value = sharedPreferences.getBoolean("is_reasoning_mode", false)
+    }
+
+    fun selectBot(bot: ChatBot) {
+        _selectedBot.value = bot
+        sharedPreferences.edit().putString("selected_bot_id", bot.id).apply()
+        
+        // Insert entry welcoming greeting from the selected bot
+        viewModelScope.launch {
+            val welcomeMsg = MessageEntity(
+                role = "assistant",
+                content = bot.greeting,
+                isImage = false,
+                timestamp = System.currentTimeMillis()
+            )
+            repository.insertMessage(welcomeMsg)
+        }
+    }
+
+    fun addCustomBot(name: String, desc: String, systemPrompt: String, greeting: String, emoji: String) {
+        val newBot = ChatBot(
+            id = "custom_" + System.currentTimeMillis(),
+            name = name,
+            description = desc,
+            systemPrompt = systemPrompt,
+            greeting = greeting,
+            emoji = emoji,
+            isCustom = true
+        )
+        val current = _customBots.value.toMutableList()
+        current.add(newBot)
+        _customBots.value = current
+        saveCustomBotsToPrefs(current)
+        updateAllBotsList()
+    }
+
+    fun setReasoningMode(enabled: Boolean) {
+        _isReasoningMode.value = enabled
+        sharedPreferences.edit().putBoolean("is_reasoning_mode", enabled).apply()
     }
 
     // List of messages ordered chronically
@@ -200,9 +363,9 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun handleSend(text: String) {
+    fun handleSend(text: String, attachedImageB64: String? = null) {
         val prompt = text.trim()
-        if (prompt.isEmpty()) return
+        if (prompt.isEmpty() && attachedImageB64 == null) return
 
         val currentModeIsDrawing = _isDrawingMode.value
 
@@ -215,6 +378,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                 role = "user",
                 content = if (currentModeIsDrawing) "🎨 Tạo ảnh: $prompt" else prompt,
                 isImage = false,
+                imageUrl = attachedImageB64,
                 timestamp = System.currentTimeMillis()
             )
             repository.insertMessage(userMsg)
@@ -234,12 +398,27 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     repository.insertMessage(responseMsg)
                 } else {
+                    // Inject system prompt with bot configuration and optional reasoning instructions
+                    val bot = _selectedBot.value
+                    var systemPromptToSend = bot.systemPrompt
+                    
+                    if (_isReasoningMode.value) {
+                        systemPromptToSend += "\n[Yêu cầu quan trọng: Hãy bật tư duy suy luận logic đỉnh cao. Định dạng câu trả lời bằng cách đặt suy nghĩ, lập luận từng bước của bạn trong cặp thẻ <think>...</think> ở đầu, rồi chia sẻ câu trả lời đầy đủ chính thức bám sát bên dưới thẻ đóng.]"
+                    }
+                    
+                    val enrichedPrompt = if (attachedImageB64 != null) {
+                        "[Hình ảnh đính kèm đã tải lên thành công] Câu hỏi/mô tả của người dùng về bức ảnh này: $prompt\n(Hãy giả lập khả năng thị giác phân tích ảnh này nếu bạn chưa truy xuất trực tiếp được, hãy trả lời cực kỳ tinh tế và sát sườn)"
+                    } else {
+                        prompt
+                    }
+
                     // Call Chat Completion
                     val history = messages.value
                     val responseMsg = repository.fetchChatCompletion(
                         apiKey = currentKey,
                         history = history,
-                        userMessage = prompt
+                        userMessage = enrichedPrompt,
+                        systemPrompt = systemPromptToSend
                     )
                     repository.insertMessage(responseMsg)
                 }
